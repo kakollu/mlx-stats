@@ -29,12 +29,19 @@ for n, p in zip(args[::2], args[1::2]):
     # --- ours ---
     ms.OLS(y[:1000], Xc[:1000]).fit()                    # compile kernels outside the timing
     ms.LinearRegression().fit(X[:1000], y[:1000]); ms.OLS(y[:1000], Xc[:1000]).fit(precise=True)
+    gc.collect(); t0 = time.perf_counter(); ms.OLS(y, Xc).fit(); t_first = time.perf_counter() - t0
     r_ms, t = best(lambda: ms.OLS(y, Xc).fit(), 3); s = r_ms.summary()
+    rows.append(("mlx-stats OLS.fit(), first call on this data (fresh MLX memory)", t_first, r_ms.params_arr, "cold"))
     rows.append(("mlx-stats OLS.fit(): statsmodels results + diagnostics", t, r_ms.params_arr, f"{r_ms._passes} passes"))
     r_g, t = best(lambda: ms.OLS(y, Xc).fit(refine=False), 3)
     rows.append(("mlx-stats OLS.fit(refine=False): one pass, no residual diagnostics", t, r_g.params_arr, "1 pass"))
     lr, t = best(lambda: ms.LinearRegression().fit(X, y), 3)
     rows.append(("mlx-stats LinearRegression (scikit-learn style)", t, np.concatenate([[lr.intercept_], lr.coef_]), ""))
+    import pandas as pd
+    df = pd.DataFrame(X, columns=[f"x{i}" for i in range(p)]); ys = pd.Series(y, name="y")
+    r_df, t = best(lambda: ms.OLS(ys, df, add_constant=True).fit(), 3)
+    rows.append(("mlx-stats OLS(y, DataFrame, add_constant=True).fit()", t, np.asarray(r_df.params), "pandas"))
+    del df
     Xm, ym = mx.array(Xc.astype(np.float32)), mx.array(y.astype(np.float32)); mx.eval(Xm, ym)
     r_m, t = best(lambda: ms.OLS(ym, Xm).fit(), 3)
     rows.append(("mlx-stats OLS.fit() on data already in MLX (float32)", t, r_m.params_arr, "resident"))
@@ -55,5 +62,5 @@ for n, p in zip(args[::2], args[1::2]):
     for name, t, b, note in rows:
         err = np.max(np.abs(b - ref) / np.maximum(np.abs(ref), 1e-12))
         print(f"  {name:<68} {t:8.3f} s  {tref / t:7.1f}x statsmodels   max rel diff vs statsmodels {err:.1e}  {note}", flush=True)
-    print(f"  floor: copy of the float64 input into MLX at ~55 GB/s {gb64 / 55:.3f} s; one GPU read of it as float32 at ~500 GB/s {gb64 / 2 / 500:.4f} s", flush=True)
+    print(f"  floor: copy of the float64 input into MLX at ~117 GB/s {gb64 / 117:.3f} s; one GPU read of it as float32 at ~500 GB/s {gb64 / 2 / 500:.4f} s", flush=True)
     del X, Xc, y

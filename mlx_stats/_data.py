@@ -29,6 +29,24 @@ def _parallel_copy(dst, src):
     list(_pool.map(lambda k: np.copyto(dst[cuts[k]:cuts[k + 1]], src[cuts[k]:cuts[k + 1]]), range(COPY_THREADS)))
 
 
+def _parallel_copy_cols(dst, srcT, m):
+    """srcT: (p, m) with contiguous rows (one per column of X) -> dst[:, :m], columns split over threads."""
+    global _pool
+    if _pool is None:
+        _pool = ThreadPoolExecutor(COPY_THREADS)
+    p = srcT.shape[0]
+    if p * m * srcT.itemsize < (8 << 20) or p == 1:
+        np.copyto(dst[:, :m], srcT)
+        return
+    if p >= COPY_THREADS:
+        cuts = np.linspace(0, p, COPY_THREADS + 1).astype(int)
+        list(_pool.map(lambda k: np.copyto(dst[cuts[k]:cuts[k + 1], :m], srcT[cuts[k]:cuts[k + 1]]), range(COPY_THREADS)))
+    else:                                               # few columns: split each column's run instead
+        cuts = np.linspace(0, m, COPY_THREADS // p + 2).astype(int)
+        jobs = [(c, cuts[k], cuts[k + 1]) for c in range(p) for k in range(len(cuts) - 1)]
+        list(_pool.map(lambda t: np.copyto(dst[t[0], t[1]:t[2]], srcT[t[0], t[1]:t[2]]), jobs))
+
+
 def _mlx_buffer(shape, dtype):
     """An evaluated MLX array and a writable NumPy view of the same memory (unified memory: no copy)."""
     m = mx.zeros(shape, dtype)
@@ -136,12 +154,40 @@ class DeviceData:
         three reused staging buffers as raw bits and is rounded on the GPU; float32 is copied into its block."""
         X = self.X
         f64 = X.dtype == np.float64
-        if not X.flags.c_contiguous:
-            X = None                                    # column-major (e.g. from a DataFrame): per-block transpose
+        colmajor = not X.flags.c_contiguous and X.flags.f_contiguous       # what a DataFrame usually hands over
+        if not X.flags.c_contiguous and not colmajor:
+            X = np.ascontiguousarray(X)
         ring, pending = [], [None, None, None]
         for b, i in enumerate(range(0, self.n, self.rows)):
             j = min(self.n, i + self.rows)
-            src = (X[i:j] if X is not None else np.ascontiguousarray(self.X[i:j]))
+            if colmajor:
+                # each column's rows i..j are contiguous: copy them into a (p, rows) block on several threads,
+                # then transpose on the GPU instead of on one CPU core
+                srcT = X.T[:, i:j]
+                k = b % 3
+                if len(ring) <= k:
+                    ring.append(_mlx_buffer((self.p, (2 if f64 else 1) * self.rows), mx.uint32 if f64 else mx.float32))
+                if pending[k] is not None:
+                    mx.eval(pending[k])
+                buf, view = ring[k]
+                m = j - i
+                if f64:
+                    _parallel_copy_cols(view, srcT.view(np.uint32), 2 * m)    # rows stay contiguous: no copy
+                    colsT = bits_to_f32(buf[:, :2 * m] if m < self.rows else buf, (self.p, m))
+                else:
+                    _parallel_copy_cols(view, srcT.astype(np.float32, copy=False), m)
+                    colsT = buf[:, :m] if m < self.rows else buf
+                Xb = mx.contiguous(mx.transpose(colsT))
+                pending[k] = Xb
+                yb = _to_dev(self.y[i:j])
+                sb = None if self.w is None else mx.sqrt(mx.maximum(_to_dev(self.w[i:j]), 0.0))
+                mx.async_eval(Xb)
+                blk = (Xb, yb, sb)
+                if keep is not None:
+                    keep.append(blk)
+                yield blk
+                continue
+            src = X[i:j]
             if f64:
                 k = b % 3
                 if len(ring) <= k:
