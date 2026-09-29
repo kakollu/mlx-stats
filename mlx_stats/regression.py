@@ -46,9 +46,12 @@ class SingularDesignWarning(UserWarning):
 class OLS:
     """Ordinary least squares, statsmodels argument order: OLS(endog, exog)."""
 
-    def __init__(self, endog, exog, hasconst=None, resident=None):
+    def __init__(self, endog, exog, hasconst=None, resident=None, add_constant=False):
+        """add_constant=True fits an intercept without copying X to append a column (statsmodels needs
+        sm.add_constant(X), a full copy); the constant is reported first, named 'const'."""
         self.data = DeviceData(exog, endog, None, resident)
         self.hasconst = hasconst
+        self.add_constant = add_constant
         self._weighted = False
         self._init_names()
 
@@ -56,8 +59,9 @@ class OLS:
         d = self.data
         self.yname = d.yname or "y"
         self._pandas = d.xnames is not None
-        self.xnames = d.xnames
+        self.xnames = (["const"] + list(d.xnames)) if (d.xnames is not None and self.add_constant) else d.xnames
         self.nobs = float(d.n)
+        self.k_design = d.p + (1 if self.add_constant else 0)
 
     def fit(self, cov_type="nonrobust", use_t=None, refine=True, precise=None, max_passes=4):
         """cov_type: 'nonrobust', 'HC0' or 'HC1'. refine: run the residual pass (exact SSR, diagnostics, refinement).
@@ -69,9 +73,10 @@ class OLS:
 class WLS(OLS):
     """Weighted least squares: WLS(endog, exog, weights). Weights are inverse variances, as in statsmodels."""
 
-    def __init__(self, endog, exog, weights=1.0, hasconst=None, resident=None):
+    def __init__(self, endog, exog, weights=1.0, hasconst=None, resident=None, add_constant=False):
         self.data = DeviceData(exog, endog, weights, resident)
         self.hasconst = hasconst
+        self.add_constant = add_constant
         self._weighted = self.data.w is not None
         self._init_names()
 
@@ -130,8 +135,9 @@ class RegressionResults:
             self.exact_gram = True
             info = self._setup(G, Kx, Ky, RANK_TOL_EXACT)
         beta, ssr, J, F, Fp = info["beta"], info["ssr"], info["J"], info["F"], info["Fp"]
+        self._lam_min = info["lam_min"]
         rank, k_constant = self.rank, self.k_constant
-        if rank < p:
+        if rank < self.model.k_design:
             warnings.warn("The design matrix is rank-deficient. The model parameters are not uniquely determined.",
                           SingularDesignWarning, stacklevel=3)
         elif info["lam_min"] < DATA_TOL:
@@ -144,8 +150,8 @@ class RegressionResults:
         # --- residual pass: exact SSR, refinement, diagnostics ----------------------------------------------------
         if refine:
             for it in range(max_passes):
-                c0 = float(Kx @ beta - Ky)
-                beta_s = beta.copy()
+                c0 = float(self._Kd @ beta - Ky)
+                beta_s = beta[self._vc:].copy()
                 grad, mom, dwn, _ = resid_pass(d, K, beta_s, c0)
                 self._passes += 1
                 ssr_pass = mom[1]                                    # sum rho^2, exact to float32 rounding of rho
@@ -193,20 +199,25 @@ class RegressionResults:
         M = G[np.ix_(xi, xi)]
         b = G[xi, p]
         gyy, gy1, g11 = G[p, p], G[p, p + 1], G[p + 1, p + 1]
-        # constants, statsmodels rules (on exog, before weighting): a column whose shifted values are all exactly 0
-        zero_var = np.diag(M)[:p] == 0.0
+        # design columns: [virtual constant (add_constant)] + the columns of X. A constant column's shift is its
+        # value and its shifted values are all exactly 0; the virtual one behaves the same way with value 1.
+        vc = 1 if model.add_constant else 0
+        zero_real = np.diag(M)[:p] == 0.0
+        zero_var = np.concatenate([[True] * vc, zero_real])
+        Kd = np.concatenate([[1.0] * vc, Kx])
+        pd_ = p + vc
         const_cols = np.where(zero_var)[0]
         self._name_const = int(const_cols[0]) if const_cols.size else None
         k_constant, const_idx = 0, None
         check_implicit = False
         if model.hasconst is not False:
             if const_cols.size == 1:
-                if Kx[const_cols[0]] != 0:
+                if Kd[const_cols[0]] != 0:
                     k_constant, const_idx = 1, int(const_cols[0])
                 else:
                     check_implicit = True
             elif const_cols.size > 1:
-                vals = Kx[const_cols]
+                vals = Kd[const_cols]
                 ones = np.where(vals == 1)[0]
                 if ones.size:
                     k_constant, const_idx = 1, int(const_cols[ones[0]])
@@ -216,16 +227,16 @@ class RegressionResults:
                     check_implicit = True
             else:
                 check_implicit = True
-        # the basis: non-constant shifted columns and the constant
-        J = [j for j in range(p) if not zero_var[j]] + [p]
+        # the basis: non-constant shifted columns of X and the constant
+        J = [j for j in range(p) if not zero_real[j]] + [p]
         MJ = M[np.ix_(J, J)]
         bJ = b[J]
         V, lam, dsc, rJ, lam_all = _pinv_sym_psd(MJ, rank_tol)
         m = len(J)
-        Wmap = np.zeros((m, p))
+        Wmap = np.zeros((m, pd_))                         # design column c = B_J @ Wmap[:, c]
         for r, j in enumerate(J[:-1]):
-            Wmap[r, j] = 1.0
-        Wmap[m - 1, :] = Kx
+            Wmap[r, j + vc] = 1.0
+        Wmap[m - 1, :] = Kd
         Rq = (np.sqrt(lam)[:, None] * V.T) * dsc[None, :]
         Rinv_t = V / np.sqrt(lam)[None, :] / dsc[:, None]
         F = Rq @ Wmap
@@ -249,6 +260,7 @@ class RegressionResults:
         self._ssr_gram = ssr
         self.wexog_singular_values = svals
         lam_min = float(lam_all.min() / lam_all.max()) if lam_all.size and lam_all.max() > 0 else 0.0
+        self._Kd, self._vc = Kd, vc
         return {"beta": beta, "ssr": ssr, "J": J, "F": F, "Fp": Fp, "lam_min": lam_min}
 
     # --- robust covariance: one more Gram pass with rows scaled by w |r| --------------------------------------------
@@ -257,8 +269,8 @@ class RegressionResults:
         from ._passes import gram_pass
         d = self.model.data
         p = d.p
-        c0 = float(K[:p].astype(np.float64) @ beta - float(K[p]))
-        _, _, _, routs = resid_pass(d, K, beta, c0, write_r=True)
+        c0 = float(self._Kd @ beta - float(K[p]))
+        _, _, _, routs = resid_pass(d, K, beta[self._vc:], c0, write_r=True)
         self._passes += 1
         scales = []
         for (Xb, yb, sb), r in zip(d.blocks(), routs):
@@ -287,7 +299,7 @@ class RegressionResults:
     def exog_names(self):
         if self.model.xnames is not None:
             return list(self.model.xnames)
-        p = self.model.data.p
+        p = self.model.k_design
         if self._name_const is not None:                    # statsmodels: the first zero-variance column is 'const'
             names = [f"x{i}" for i in range(1, p)]
             names.insert(self._name_const, "const")
@@ -421,6 +433,47 @@ class RegressionResults:
             return None
         mom, dwn = self._diag
         return _tests.diagnostics(mom[0], mom[1], mom[2], mom[3], self.nobs, dwn)
+
+    def predict(self, exog=None):
+        """Predictions X @ params for new exog (same columns as the fit; without the virtual constant). With no
+        argument, the fitted values."""
+        if exog is None:
+            return self.fittedvalues
+        import mlx.core as mx
+        if isinstance(exog, mx.array):
+            b = mx.array(self.params_arr[self._vc:].astype(np.float32))
+            out = exog.astype(mx.float32) @ b + float(self.params_arr[0] if self._vc else 0.0)
+            return np.array(out)
+        X = np.asarray(exog.to_numpy() if hasattr(exog, "to_numpy") else exog, dtype=np.float64)
+        if X.ndim == 1:
+            X = X[:, None] if self.model.data.p == 1 else X[None, :]
+        out = X @ self.params_arr[self._vc:]
+        return out + (self.params_arr[0] if self._vc else 0.0)
+
+    @property
+    def resid(self):
+        """y - X params for every row (one more pass over the data, then cached)."""
+        if getattr(self, "_resid", None) is None:
+            import mlx.core as mx
+            d = self.model.data
+            c0 = float(self._Kd @ self.params_arr - float(self._K[d.p]))
+            _, _, _, routs = resid_pass(d, self._K, self.params_arr[self._vc:], c0, write_r=True)
+            self._resid = np.concatenate([np.array(r).astype(np.float64) for r in routs])
+        return self._resid
+
+    @property
+    def wresid(self):
+        if not self.model._weighted:
+            return self.resid
+        w = self.model.data.w
+        w = np.array(w) if not isinstance(w, np.ndarray) else w
+        return np.sqrt(np.asarray(w, np.float64)) * self.resid
+
+    @property
+    def fittedvalues(self):
+        y = self.model.data.y
+        y = np.array(y).astype(np.float64) if not isinstance(y, np.ndarray) else y.astype(np.float64)
+        return y - self.resid
 
     def summary(self, alpha=0.05):
         from ._summary import summary

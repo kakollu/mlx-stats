@@ -167,7 +167,33 @@ same = np.array_equal(r1.params, r2.params) and r1.ssr == r2.ssr
 print(f"{'PASS' if same else 'FAIL'}  {'streaming (not resident) == resident':<44} identical params and SSR: {same}")
 results.append(("streaming", "PASS" if same else "FAIL"))
 
-# 22: bad input
+# 22-25: the virtual constant, residuals, predictions, the scikit-learn API
+compare("add_constant=True (no copy of X) vs sm.add_constant", y, X, ms_X=X[:, 1:], ms_kw={"add_constant": True})
+compare("WLS add_constant=True", y, X, sm_kw={"weights": w}, ms_kw={"weights": w, "add_constant": True}, model="WLS", ms_X=X[:, 1:])
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    r0 = sm.WLS(y, X, weights=w).fit(); r1 = ms.WLS(y, X, weights=w).fit()
+    Xnew = f32(rng.standard_normal((50, X.shape[1])))
+    checks = {"resid": close(r1.resid, r0.resid, 0, atol=1e-6 * np.abs(r0.resid).max()),
+              "wresid": close(r1.wresid, r0.wresid, 0, atol=1e-6 * np.abs(r0.wresid).max()),
+              "fittedvalues": close(r1.fittedvalues, r0.fittedvalues, 1e-9, atol=1e-6 * np.abs(r0.resid).max()),
+              "predict": close(r1.predict(Xnew), r0.predict(Xnew), 1e-9, atol=1e-7 * np.abs(r0.predict(Xnew)).max())}
+ok = all(v[0] for v in checks.values())
+print(f"{'PASS' if ok else 'FAIL'}  {'WLS resid / wresid / fittedvalues / predict':<44} worst: " + ", ".join(f"{k} {v[1]:.0e}" for k, v in checks.items()))
+results.append(("resid", "PASS" if ok else "FAIL"))
+from sklearn.linear_model import LinearRegression as SkLR
+for fi, sw in [(True, None), (False, None), (True, w)]:
+    a = SkLR(fit_intercept=fi).fit(X[:, 1:], y, sample_weight=sw); b = ms.LinearRegression(fit_intercept=fi).fit(X[:, 1:], y, sample_weight=sw)
+    se = np.asarray(ms.OLS(y, X[:, 1:], add_constant=fi).fit().bse)[1 if fi else 0:] if sw is None else np.ones(X.shape[1] - 1)
+    okc = np.all(np.abs(b.coef_ - a.coef_) <= 1e-7 * np.abs(a.coef_) + 1e-6 * se)
+    oki = abs(b.intercept_ - a.intercept_) <= 1e-6 * max(1, abs(a.intercept_))
+    oks = abs(b.score(X[:, 1:], y) - a.score(X[:, 1:], y)) <= 1e-7
+    ok = okc and oki and oks
+    tag = f"LinearRegression fit_intercept={fi}" + (" weighted" if sw is not None else "")
+    print(f"{'PASS' if ok else 'FAIL'}  {tag:<44} coef rel {np.max(np.abs(b.coef_ - a.coef_) / np.abs(a.coef_)):.0e}, intercept {abs(b.intercept_ - a.intercept_):.0e}, score {abs(b.score(X[:, 1:], y) - a.score(X[:, 1:], y)):.0e}")
+    results.append((tag, "PASS" if ok else "FAIL"))
+
+# 26: bad input
 Xbad = X.copy(); Xbad[5, 2] = np.nan
 try:
     ms.OLS(y, Xbad).fit(); ok = False
