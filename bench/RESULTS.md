@@ -90,8 +90,8 @@ most of the time).
 
 ## Independent review (2026-09-28)
 
-Four review agents, each confined to this repository and small inputs, looked for defects in the kernels, statsmodels
-parity, numerical robustness, and input handling / API, and had to reproduce each finding with a script. They reported
+An independent review in four areas - the Metal kernels, statsmodels parity, numerical robustness, and input handling /
+API - looked for defects on small inputs, and every finding had to be reproduced with a script. They reported
 ~45 findings (overlapping); every one was re-run before fixing. Fixed, each now a test in the suite:
 
 - tiny inputs (< 8 values, including a one-row last block) failed to compile: MLX binds them in constant memory
