@@ -10,10 +10,10 @@ run on Windows, Linux or Intel Macs.
 ## Quick start
 
 ```bash
-pip install mlx-stats
+pip install git+https://github.com/kakollu/mlx-stats
 ```
 
-(Until the first PyPI release: `pip install git+https://github.com/kakollu/mlx-stats`.)
+The install refuses to build anywhere but an Apple Silicon Mac with a native (arm64) Python.
 
 ```python
 import pandas as pd
@@ -44,8 +44,6 @@ To see it run on synthetic data (5 million rows, timed, and compared with statsm
 ```bash
 mlx-stats demo
 ```
-
-With [uv](https://docs.astral.sh/uv/), `uvx mlx-stats demo` runs the demo without installing anything permanently.
 
 ### Without formulas
 
