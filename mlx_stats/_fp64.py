@@ -44,6 +44,17 @@ _SRC = """
 _k = None
 
 
+def bits_to_f32(bits, shape):
+    """bits: MLX uint32 array holding float64 patterns (little-endian pairs) -> float32 MLX array of `shape`."""
+    global _k
+    if _k is None:
+        _k = mx.fast.metal_kernel(name="mlxstats_f64_to_f32", input_names=["B", "n"], output_names=["out"], source=_SRC)
+    n = int(np.prod(shape))
+    out = _k(inputs=[bits, mx.array(np.array([n], np.uint64))], grid=(max(n, 1), 1, 1), threadgroup=(256, 1, 1),
+             output_shapes=[(max(n, 1),)], output_dtypes=[mx.float32])[0]
+    return out[:n].reshape(shape) if n else mx.zeros(shape, mx.float32)
+
+
 def to_f32(a64):
     """a64: C-contiguous float64 numpy array -> float32 MLX array of the same shape (rounded on the GPU)."""
     global _k

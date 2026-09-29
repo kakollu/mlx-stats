@@ -24,6 +24,7 @@ _SRC = """
     threadgroup float SH[{P} + 1];
     threadgroup float LAST[1];
     threadgroup float RED[16 * {R}];
+    threadgroup float GR[2 * {NT}];
     for (uint j = tid; j < 2 * {P} + 2; j += {NT}) CF[j] = coef[j];
     for (uint j = tid; j < {P} + 1; j += {NT}) SH[j] = shift[j];
     ulong n = (ulong)meta[0] | ((ulong)meta[1] << 32);
@@ -32,6 +33,9 @@ _SRC = """
     float m1h = 0, m1l = 0, m2h = 0, m2l = 0, m3h = 0, m3l = 0, m4h = 0, m4l = 0, dwh = 0, dwl = 0;
     float u2h = 0, u2l = 0, wyh = 0, wyl = 0, swh = 0, swl = 0;
     float gh = 0, gl = 0;
+    // X^T W r is split over (column, share of the stage's rows): p + 1 threads alone would each walk every row
+    uint gcol = tid % ({P} + 1), gsp = tid / ({P} + 1);
+    bool gact = tid < {GSPLIT} * ({P} + 1);
     float first = 0.0f;
     if (tid == 0) LAST[0] = 0.0f;
     const device float4 *X4 = (const device float4 *)X;
@@ -86,16 +90,16 @@ _SRC = """
             float d = RHO[tid] - (tid > 0 ? RHO[tid - 1] : LAST[0]);
             two_sum_acc(dwh, dwl, d * d);
         }}
-        if (tid <= {P}) {{
+        if (gact) {{
             // X^T W r: the terms cancel to near zero at the solution, so each product goes in exactly (TwoProd)
-            if (tid < {P}) {{
-                float k = SH[tid];
-                for (uint i = 0; i < nr; i++) {{
-                    float ah, al; two_sum(Za[i * {LDA} + tid], -k, ah, al);     // x - K exactly
+            if (gcol < {P}) {{
+                float k = SH[gcol];
+                for (uint i = gsp; i < nr; i += {GSPLIT}) {{
+                    float ah, al; two_sum(Za[i * {LDA} + gcol], -k, ah, al);     // x - K exactly
                     float vh = VH[i], vl = VL[i];
                     float p = ah * vh; gl += fma(ah, vh, -p) + (ah * vl + al * vh); two_sum_acc(gh, gl, p);
                 }}
-            }} else {{ for (uint i = 0; i < nr; i++) {{ two_sum_acc(gh, gl, VH[i]); gl += VL[i]; }} }}
+            }} else {{ for (uint i = gsp; i < nr; i += {GSPLIT}) {{ two_sum_acc(gh, gl, VH[i]); gl += VL[i]; }} }}
         }}
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (tid == 0) LAST[0] = RHO[nr - 1];
@@ -115,7 +119,15 @@ _SRC = """
         uint k = tid < 5 ? 2 * tid : 2 * tid + 3;            // slots 0-9: moments and DW; 13-18: TSS sums (10-12 used below)
         part[o + 2 * ({P} + 1) + k] = h; part[o + 2 * ({P} + 1) + k + 1] = l;
     }}
-    if (tid <= {P}) {{ part[o + 2 * tid] = gh; part[o + 2 * tid + 1] = gl; }}
+    // combine the row shares of each column (two-float), reusing RED after the moment reduction above
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (gact) {{ GR[2 * tid] = gh; GR[2 * tid + 1] = gl; }}
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid <= {P}) {{
+        float h = 0.0f, l = 0.0f;
+        for (uint sp = 0; sp < {GSPLIT}; sp++) {{ uint t = sp * ({P} + 1) + tid; two_sum_acc(h, l, GR[2 * t]); l += GR[2 * t + 1]; }}
+        part[o + 2 * tid] = h; part[o + 2 * tid + 1] = l;
+    }}
     if (tid == 0) {{ part[o + 2 * ({P} + 1) + 10] = first; part[o + 2 * ({P} + 1) + 11] = LAST[0];
                      part[o + 2 * ({P} + 1) + 12] = (float)(r1 > r0); }}
 """
@@ -136,7 +148,9 @@ def _kernel(p, has_s, write_r):
         return _kernels[key]
     r, lda = _config(p)
     nout = 2 * (p + 1) + 19
-    src = _SRC.format(R=r, LDA=lda, P=p, NT=NT, F4=r * p // 4, NOUT=nout,
+    if p + 1 > NT:
+        raise ValueError(f"the residual pass supports up to {NT - 1} columns; got {p}")
+    src = _SRC.format(R=r, LDA=lda, P=p, NT=NT, F4=r * p // 4, NOUT=nout, GSPLIT=max(1, NT // (p + 1)),
                       SLOAD="sv = S[rb + tid];" if has_s else "",
                       ROUT="rout[rb + tid] = r;" if write_r else "")
     ins = ["X", "Y"] + (["S"] if has_s else []) + ["shift", "coef", "meta"]

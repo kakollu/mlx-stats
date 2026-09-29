@@ -6,12 +6,35 @@ used in place. Blocks are ~128 MB so the copy of one overlaps the GPU work on th
 fits comfortably in memory it is kept, so later passes (residuals, robust covariance) do not copy again.
 """
 import os
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import mlx.core as mx
-from ._fp64 import to_f32
+from ._fp64 import to_f32, bits_to_f32
 
 BLOCK_BYTES = 128 << 20
-SAMPLE_ROWS = 65536
+COPY_THREADS = 8           # one copy thread reaches ~57 GB/s into MLX memory, eight ~117 (M5 Max)
+_pool = None
+
+
+def _parallel_copy(dst, src):
+    """np.copyto in row slices on COPY_THREADS threads (NumPy releases the GIL while copying)."""
+    global _pool
+    if _pool is None:
+        _pool = ThreadPoolExecutor(COPY_THREADS)
+    n = len(src)
+    if n * src.itemsize * (src.shape[1] if src.ndim > 1 else 1) < (8 << 20):
+        np.copyto(dst, src)
+        return
+    cuts = np.linspace(0, n, COPY_THREADS + 1).astype(int)
+    list(_pool.map(lambda k: np.copyto(dst[cuts[k]:cuts[k + 1]], src[cuts[k]:cuts[k + 1]]), range(COPY_THREADS)))
+
+
+def _mlx_buffer(shape, dtype):
+    """An evaluated MLX array and a writable NumPy view of the same memory (unified memory: no copy)."""
+    m = mx.zeros(shape, dtype)
+    mx.eval(m)
+    return m, np.asarray(m)
+SAMPLE_ROWS = 2048          # enough to put the shift near the means; constancy is decided by the full pass
 
 
 def _physmem():
@@ -108,6 +131,40 @@ class DeviceData:
             sb = mx.sqrt(mx.maximum(wb, 0.0))
         return Xb, yb, sb
 
+    def _stream_numpy(self, keep):
+        """NumPy X in blocks, copied on several threads straight into MLX memory. float64 goes through a ring of
+        three reused staging buffers as raw bits and is rounded on the GPU; float32 is copied into its block."""
+        X = self.X
+        f64 = X.dtype == np.float64
+        if not X.flags.c_contiguous:
+            X = None                                    # column-major (e.g. from a DataFrame): per-block transpose
+        ring, pending = [], [None, None, None]
+        for b, i in enumerate(range(0, self.n, self.rows)):
+            j = min(self.n, i + self.rows)
+            src = (X[i:j] if X is not None else np.ascontiguousarray(self.X[i:j]))
+            if f64:
+                k = b % 3
+                if len(ring) <= k:
+                    ring.append(_mlx_buffer((self.rows, 2 * self.p), mx.uint32))
+                if pending[k] is not None:
+                    mx.eval(pending[k])                 # the GPU has finished reading this staging buffer
+                buf, view = ring[k]
+                _parallel_copy(view[:j - i], src.view(np.uint32).reshape(j - i, 2 * self.p))
+                Xb = bits_to_f32(buf[:j - i] if j - i < self.rows else buf, (j - i, self.p))
+                pending[k] = Xb
+            else:
+                Xb, view = _mlx_buffer((j - i, self.p), mx.float32)
+                _parallel_copy(view, src.astype(np.float32, copy=False))
+            yb = _to_dev(self.y[i:j])
+            sb = None
+            if self.w is not None:
+                sb = mx.sqrt(mx.maximum(_to_dev(self.w[i:j]), 0.0))
+            mx.async_eval(Xb)
+            blk = (Xb, yb, sb)
+            if keep is not None:
+                keep.append(blk)
+            yield blk
+
     def blocks(self):
         """Yield (X, y, s) float32 MLX blocks in row order; s = sqrt(weights) or None."""
         if isinstance(self.X, mx.array) and isinstance(self.y, mx.array) and (self.w is None or isinstance(self.w, mx.array)):
@@ -117,11 +174,14 @@ class DeviceData:
             yield from self._cache
             return
         keep = [] if self.resident else None
-        for i in range(0, self.n, self.rows):
-            b = self._make(i, min(self.n, i + self.rows))
-            if keep is not None:
-                keep.append(b)
-            yield b
+        if isinstance(self.X, np.ndarray):
+            yield from self._stream_numpy(keep)
+        else:
+            for i in range(0, self.n, self.rows):
+                b = self._make(i, min(self.n, i + self.rows))
+                if keep is not None:
+                    keep.append(b)
+                yield b
         if keep is not None:
             self._cache = keep
 
