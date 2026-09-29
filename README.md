@@ -42,12 +42,12 @@ On an M5 Max, from NumPy float64 input, against `statsmodels.OLS(...).fit()` (fu
 
 | shape | mlx-stats full fit | statsmodels | scikit-learn | NumPy normal equations (no inference) |
 |---|---:|---:|---:|---:|
-| 1M x 10 | 5 ms | 155 ms | 62 ms | 4 ms |
-| 10M x 10 | 21 ms | 1.41 s | 639 ms | 33 ms |
-| 10M x 50 | 67 ms | 10.1 s | 5.49 s | 189 ms |
-| 100M x 10 | 144 ms | 25.2 s | 7.53 s | 331 ms |
+| 1M x 10 | 5 ms | 160 ms | 63 ms | 4 ms |
+| 10M x 10 | 20 ms | 1.49 s | 630 ms | 33 ms |
+| 10M x 50 | 68 ms | 9.97 s | 5.40 s | 187 ms |
+| 100M x 10 | 144 ms | 26.4 s | 8.33 s | 332 ms |
 
-With the data already in MLX memory the full fit of 100M x 10 takes 31 ms. On the same float32-valued data the
+With the data already in MLX memory the full fit of 100M x 10 takes 30 ms. On the same float32-valued data the
 parameters match statsmodels to 1e-9 to 1e-14 relative and the summary text is identical (`tests/test_vs_statsmodels.py`,
 56 cases, including 25 regression tests from an independent review).
 
@@ -71,10 +71,26 @@ weights); fitted values, residuals and every fit statistic still agree.
 - No formula interface, missing-data handling (`missing='drop'`), HC2/HC3, cluster or HAC covariance yet.
 - Apple silicon with MLX only.
 
+## Install
+
+Apple Silicon Mac, Python 3.11 or later:
+
+```bash
+git clone https://github.com/kakollu/mlx-stats && cd mlx-stats
+python3 -m venv .venv && .venv/bin/pip install -e ".[test]"
+```
+
+Runtime dependencies are `mlx`, `numpy` and `scipy`; `pandas` is optional (DataFrame input and pandas-typed results).
+The `test` extra adds statsmodels, scikit-learn and pandas for the comparison suite. Tested on an M5 Max with
+Python 3.11 and 3.14 and MLX 0.32.2-0.32.3; other Apple Silicon chips have not been tested yet.
+
 ## Reproduce
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install mlx numpy scipy statsmodels scikit-learn pandas
 .venv/bin/python tests/test_vs_statsmodels.py
 .venv/bin/python bench/bench_ols.py 1_000_000 10 10_000_000 10 10_000_000 50 100_000_000 10
 ```
+
+## License
+
+MIT, see `LICENSE`.

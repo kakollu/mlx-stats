@@ -1,46 +1,48 @@
 # Results
 
-Last updated: 2026-09-28. Apple M5 Max (40 GPU cores, 128 GB), macOS 27, MLX 0.32.2, NumPy 2.4.6, statsmodels 0.15.0,
+Last updated: 2026-09-28. Apple M5 Max (40 GPU cores, 128 GB), macOS 27, MLX 0.32.2 (tests also pass on 0.32.3), NumPy 2.4.6, statsmodels 0.15.0,
 scikit-learn 1.9.1. Timings are best of 3 unless marked "first call"; the machine had no other heavy load (registered as
 `STATS` in the hub's `MACHINE.md`).
 
-## Linear regression against the standard libraries (`bench/bench_ols.py`, log `bench-ols-3.log`)
+## Linear regression against the standard libraries (`bench/bench_ols.py`, log `bench-ols-4.log`)
 
-Input: NumPy float64 X (n x p, a third of the columns with mean 20 and sd 5) plus a constant column, y = X b + noise.
-"Full fit" is `mlx_stats.OLS(y, X).fit()`: parameters, standard errors, t/p values, confidence intervals, R^2, F,
-log-likelihood, AIC/BIC, omnibus, Jarque-Bera, skew, kurtosis, Durbin-Watson and condition number, i.e. everything in
-statsmodels' summary. Speed-ups are against `statsmodels.OLS(y, X).fit()`, which computes the same numbers except the
-residual diagnostics (those are computed when `summary()` is called; that row is listed too).
+Final run on the published code (after the independent review's fixes), 2026-09-28. Input: NumPy float64 X (n x p, a
+third of the columns with mean 20 and sd 5) plus a constant column, y = X b + noise. "Full fit" is
+`mlx_stats.OLS(y, X).fit()`: parameters, standard errors, t/p values, confidence intervals, R^2, F, log-likelihood,
+AIC/BIC, omnibus, Jarque-Bera, skew, kurtosis, Durbin-Watson and condition number, i.e. everything in statsmodels'
+summary. Speed-ups are against `statsmodels.OLS(y, X).fit()`, which computes the same numbers except the residual
+diagnostics (those are computed when `summary()` is called; that row is listed too).
 
 | shape (float64 input) | 1M x 10 | 10M x 10 | 10M x 50 | 100M x 10 |
 |---|---:|---:|---:|---:|
-| **mlx-stats full fit** | **5 ms** (33x) | **21 ms** (68x) | **67 ms** (152x) | **144 ms** (175x) |
-| mlx-stats full fit, first call on the data | 10 ms | 37 ms | 99 ms | 203 ms |
-| mlx-stats full fit from a pandas DataFrame | 5 ms | 20 ms | 71 ms | 149 ms |
-| mlx-stats full fit, data already in MLX (float32) | 3 ms (58x) | 5 ms (283x) | 17 ms (595x) | 31 ms (807x) |
-| mlx-stats one pass (`refine=False`, no residual diagnostics) | 3 ms | 17 ms | 55 ms | 121 ms |
-| mlx-stats `LinearRegression` (scikit-learn style) | 5 ms | 17 ms | 55 ms | 113 ms |
-| statsmodels `OLS.fit()` | 155 ms | 1.41 s | 10.1 s | 25.2 s |
-| statsmodels `OLS.fit().summary()` | 202 ms | 1.96 s | 10.8 s | 22.1 s |
-| scikit-learn `LinearRegression` | 62 ms | 639 ms | 5.49 s | 7.53 s |
-| NumPy normal equations (Accelerate X^T X, float64; no inference) | 4 ms | 33 ms | 189 ms | 331 ms |
-| NumPy `lstsq` (no inference) | 50 ms | 495 ms | 5.02 s | 5.19 s |
+| **mlx-stats full fit** | **5 ms** (33x) | **20 ms** (73x) | **68 ms** (147x) | **144 ms** (183x) |
+| mlx-stats full fit, first call on the data | 11 ms | 41 ms | 97 ms | 201 ms |
+| mlx-stats full fit from a pandas DataFrame | 6 ms | 22 ms | 69 ms | 160 ms |
+| mlx-stats full fit, data already in MLX (float32) | 3 ms (57x) | 4 ms (346x) | 16 ms (624x) | 30 ms (873x) |
+| mlx-stats one pass (`refine=False`, no residual diagnostics) | 4 ms | 15 ms | 57 ms | 118 ms |
+| mlx-stats `LinearRegression` (scikit-learn style) | 5 ms | 16 ms | 57 ms | 115 ms |
+| statsmodels `OLS.fit()` | 160 ms | 1.49 s | 9.97 s | 26.4 s |
+| statsmodels `OLS.fit().summary()` | 213 ms | 1.95 s | 10.7 s | 23.2 s |
+| scikit-learn `LinearRegression` | 63 ms | 630 ms | 5.40 s | 8.33 s |
+| NumPy normal equations (Accelerate X^T X, float64; no inference) | 4 ms | 33 ms | 187 ms | 332 ms |
+| NumPy `lstsq` (no inference) | 50 ms | 493 ms | 5.00 s | 5.34 s |
 | floor: copying the float64 input into MLX memory at ~117 GB/s | 1 ms | 8 ms | 36 ms | 82 ms |
 
 Agreement with statsmodels (largest relative parameter difference): full fit 2.6e-9 / 1.3e-9 / 1.7e-8 / 3.1e-9, one pass
 1.3e-7 / 4.3e-8 / 4.7e-8 / 1.9e-8 (the residual pass refines the parameters; on float32-valued data they then agree to
 ~1e-14, see the tests). The benchmark data are float64 draws, so the GPU sees them rounded to float32; the differences
-above are that rounding, not the solver.
+above are that rounding, not the solver. Earlier runs (`bench-ols-1..3.log`) were made before the ingest improvements
+and the review's fixes; the timings of run 3 match this one within ~5%.
 
 Reading it:
-- **Against statsmodels and scikit-learn** the gain is 33-175x (full statsmodels-type fit) and grows with size; most of
+- **Against statsmodels and scikit-learn** the gain is 33-183x (full statsmodels-type fit) and grows with size; most of
   it is algorithmic (normal equations + a small p x p solve instead of an SVD or QR of X), the rest is the GPU.
 - **Against the same algorithm on the CPU** (NumPy normal equations on Accelerate, which computes no inference) the full
-  fit is 1.6x faster at 10M x 10, 2.8x at 10M x 50 and 2.3x at 100M x 10, and the one-pass fit is 1.9-3.4x faster. At 1M
-  rows NumPy is as fast or faster: fixed costs (two host round trips per pass, ~0.15 ms each) dominate there.
-- **From NumPy input the fit costs about the copy into GPU memory**: at 100M x 10 the one-pass fit is 121 ms against an
-  82 ms copy floor and the full fit adds 23 ms for the residual pass on the already-copied data. With the data already in
-  MLX memory the full fit is 31 ms for 100M x 10 (two reads of 4.4 GB of float32).
+  fit is 1.7x faster at 10M x 10, 2.8x at 10M x 50 and 2.3x at 100M x 10, and the one-pass fit is 2.2-3.3x faster. At 1M
+  rows NumPy is as fast: fixed costs (two host round trips per pass, ~0.15 ms each) dominate there.
+- **From NumPy input the fit costs about the copy into GPU memory**: at 100M x 10 the one-pass fit is 118 ms against an
+  82 ms copy floor and the full fit adds 26 ms for the residual pass on the already-copied data. With the data already in
+  MLX memory the full fit is 30 ms for 100M x 10 (two reads of 4.4 GB of float32).
 - **First call costs 1.3-2x the warm time**: fresh MLX buffers are page-faulted as they are filled. Warm numbers are the
   steady state of refitting on the same process; a one-off fit on new data pays the first-call number.
 
@@ -116,8 +118,8 @@ Documented rather than fixed:
 - in one dummy-trap case (a category with 3 rows among 100) statsmodels' own SVD cutoff drops a real direction; there
   mlx-stats reaches the lower, correct SSR and the two disagree by design.
 
-Speed after the fixes (same shapes as above): full fit 19 / 68 / 149 ms, resident 4.9 / 15 / 30 ms - unchanged within
-noise; WLS costs ~1.4x OLS (the weights are copied too, and constants need one unweighted check).
+Speed after the fixes is the table at the top (run 4, made on the fixed code); it matches the pre-fix run 3 within ~5%.
+WLS costs ~1.4x OLS (the weights are copied too, and constants need one unweighted check).
 
 ## Correctness (`tests/test_vs_statsmodels.py`)
 

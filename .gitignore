@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 *.log.tmp
+dist/
+*.egg-info/
+*.swp

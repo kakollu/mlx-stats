@@ -4,6 +4,8 @@ OLS / WLS with statsmodels' results (standard errors, t and p values, confidence
 AIC/BIC, omnibus, Jarque-Bera, Durbin-Watson, condition number, HC0/HC1 robust covariance) computed from one pass of
 the data for X^T X and one for the residuals.
 """
+__version__ = "0.1.0"
+
 import numpy as np
 from .regression import OLS, WLS, RegressionResults, SingularDesignWarning
 from .linear_model import LinearRegression

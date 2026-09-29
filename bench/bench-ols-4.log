@@ -1,0 +1,56 @@
+
+== n = 1,000,000, p = 10 (+ const): 0.10 GB of float64 input ==
+  mlx-stats OLS.fit(), first call on this data (fresh MLX memory)         0.011 s     14.4x statsmodels   max rel diff vs statsmodels 2.6e-09  cold
+  mlx-stats OLS.fit(): statsmodels results + diagnostics                  0.005 s     33.1x statsmodels   max rel diff vs statsmodels 2.6e-09  2 passes
+  mlx-stats OLS.fit(refine=False): one pass, no residual diagnostics      0.004 s     44.8x statsmodels   max rel diff vs statsmodels 1.3e-07  1 pass
+  mlx-stats LinearRegression (scikit-learn style)                         0.005 s     31.2x statsmodels   max rel diff vs statsmodels 1.3e-07  
+  mlx-stats OLS(y, DataFrame, add_constant=True).fit()                    0.006 s     25.1x statsmodels   max rel diff vs statsmodels 2.6e-09  pandas
+  mlx-stats OLS.fit() on data already in MLX (float32)                    0.003 s     56.7x statsmodels   max rel diff vs statsmodels 2.6e-09  resident
+  statsmodels OLS.fit()                                                   0.160 s      1.0x statsmodels   max rel diff vs statsmodels 0.0e+00  
+  statsmodels OLS.fit().summary()                                         0.213 s      0.8x statsmodels   max rel diff vs statsmodels 0.0e+00  diagnostics
+  scikit-learn LinearRegression                                           0.063 s      2.5x statsmodels   max rel diff vs statsmodels 7.3e-13  
+  NumPy normal equations (Accelerate X^T X, float64)                      0.004 s     44.0x statsmodels   max rel diff vs statsmodels 5.7e-12  no inference
+  NumPy lstsq                                                             0.050 s      3.2x statsmodels   max rel diff vs statsmodels 1.2e-13  no inference
+  floor: copy of the float64 input into MLX at ~117 GB/s 0.001 s; one GPU read of it as float32 at ~500 GB/s 0.0001 s
+
+== n = 10,000,000, p = 10 (+ const): 0.96 GB of float64 input ==
+  mlx-stats OLS.fit(), first call on this data (fresh MLX memory)         0.041 s     36.5x statsmodels   max rel diff vs statsmodels 1.3e-09  cold
+  mlx-stats OLS.fit(): statsmodels results + diagnostics                  0.020 s     72.8x statsmodels   max rel diff vs statsmodels 1.3e-09  2 passes
+  mlx-stats OLS.fit(refine=False): one pass, no residual diagnostics      0.015 s     96.2x statsmodels   max rel diff vs statsmodels 4.3e-08  1 pass
+  mlx-stats LinearRegression (scikit-learn style)                         0.016 s     94.8x statsmodels   max rel diff vs statsmodels 4.3e-08  
+  mlx-stats OLS(y, DataFrame, add_constant=True).fit()                    0.022 s     69.1x statsmodels   max rel diff vs statsmodels 1.3e-09  pandas
+  mlx-stats OLS.fit() on data already in MLX (float32)                    0.004 s    346.1x statsmodels   max rel diff vs statsmodels 1.3e-09  resident
+  statsmodels OLS.fit()                                                   1.487 s      1.0x statsmodels   max rel diff vs statsmodels 0.0e+00  
+  statsmodels OLS.fit().summary()                                         1.947 s      0.8x statsmodels   max rel diff vs statsmodels 0.0e+00  diagnostics
+  scikit-learn LinearRegression                                           0.630 s      2.4x statsmodels   max rel diff vs statsmodels 5.6e-12  
+  NumPy normal equations (Accelerate X^T X, float64)                      0.033 s     45.2x statsmodels   max rel diff vs statsmodels 4.1e-10  no inference
+  NumPy lstsq                                                             0.493 s      3.0x statsmodels   max rel diff vs statsmodels 7.4e-14  no inference
+  floor: copy of the float64 input into MLX at ~117 GB/s 0.008 s; one GPU read of it as float32 at ~500 GB/s 0.0010 s
+
+== n = 10,000,000, p = 50 (+ const): 4.16 GB of float64 input ==
+  mlx-stats OLS.fit(), first call on this data (fresh MLX memory)         0.097 s    102.9x statsmodels   max rel diff vs statsmodels 1.7e-08  cold
+  mlx-stats OLS.fit(): statsmodels results + diagnostics                  0.068 s    146.8x statsmodels   max rel diff vs statsmodels 1.7e-08  2 passes
+  mlx-stats OLS.fit(refine=False): one pass, no residual diagnostics      0.057 s    175.4x statsmodels   max rel diff vs statsmodels 4.7e-08  1 pass
+  mlx-stats LinearRegression (scikit-learn style)                         0.057 s    174.7x statsmodels   max rel diff vs statsmodels 4.7e-08  
+  mlx-stats OLS(y, DataFrame, add_constant=True).fit()                    0.069 s    143.9x statsmodels   max rel diff vs statsmodels 1.7e-08  pandas
+  mlx-stats OLS.fit() on data already in MLX (float32)                    0.016 s    624.2x statsmodels   max rel diff vs statsmodels 1.7e-08  resident
+  statsmodels OLS.fit()                                                   9.970 s      1.0x statsmodels   max rel diff vs statsmodels 0.0e+00  
+  statsmodels OLS.fit().summary()                                        10.665 s      0.9x statsmodels   max rel diff vs statsmodels 0.0e+00  diagnostics
+  scikit-learn LinearRegression                                           5.400 s      1.8x statsmodels   max rel diff vs statsmodels 6.2e-12  
+  NumPy normal equations (Accelerate X^T X, float64)                      0.187 s     53.4x statsmodels   max rel diff vs statsmodels 3.9e-10  no inference
+  NumPy lstsq                                                             4.995 s      2.0x statsmodels   max rel diff vs statsmodels 1.1e-13  no inference
+  floor: copy of the float64 input into MLX at ~117 GB/s 0.036 s; one GPU read of it as float32 at ~500 GB/s 0.0042 s
+
+== n = 100,000,000, p = 10 (+ const): 9.60 GB of float64 input ==
+  mlx-stats OLS.fit(), first call on this data (fresh MLX memory)         0.201 s    131.4x statsmodels   max rel diff vs statsmodels 3.1e-09  cold
+  mlx-stats OLS.fit(): statsmodels results + diagnostics                  0.144 s    183.0x statsmodels   max rel diff vs statsmodels 3.1e-09  2 passes
+  mlx-stats OLS.fit(refine=False): one pass, no residual diagnostics      0.118 s    222.6x statsmodels   max rel diff vs statsmodels 1.9e-08  1 pass
+  mlx-stats LinearRegression (scikit-learn style)                         0.115 s    228.9x statsmodels   max rel diff vs statsmodels 1.9e-08  
+  mlx-stats OLS(y, DataFrame, add_constant=True).fit()                    0.160 s    165.3x statsmodels   max rel diff vs statsmodels 3.1e-09  pandas
+  mlx-stats OLS.fit() on data already in MLX (float32)                    0.030 s    872.5x statsmodels   max rel diff vs statsmodels 3.1e-09  resident
+  statsmodels OLS.fit()                                                  26.376 s      1.0x statsmodels   max rel diff vs statsmodels 0.0e+00  
+  statsmodels OLS.fit().summary()                                        23.228 s      1.1x statsmodels   max rel diff vs statsmodels 0.0e+00  diagnostics
+  scikit-learn LinearRegression                                           8.334 s      3.2x statsmodels   max rel diff vs statsmodels 1.2e-11  
+  NumPy normal equations (Accelerate X^T X, float64)                      0.332 s     79.5x statsmodels   max rel diff vs statsmodels 2.1e-09  no inference
+  NumPy lstsq                                                             5.343 s      4.9x statsmodels   max rel diff vs statsmodels 6.1e-13  no inference
+  floor: copy of the float64 input into MLX at ~117 GB/s 0.082 s; one GPU read of it as float32 at ~500 GB/s 0.0096 s

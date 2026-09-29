@@ -2,7 +2,6 @@
 """Every case fits the same float32-valued data with mlx-stats (GPU) and statsmodels (float64, CPU) and compares
 every reported quantity. Run: .venv/bin/python tests/test_vs_statsmodels.py [-v]"""
 import sys, warnings, numpy as np, pandas as pd, statsmodels.api as sm, mlx.core as mx
-sys.path.insert(0, __file__.rsplit("/tests/", 1)[0])
 import mlx_stats as ms
 
 VERBOSE = "-v" in sys.argv

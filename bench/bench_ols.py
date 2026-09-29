@@ -2,7 +2,6 @@
 """Linear regression against the standard libraries on this machine, from NumPy float64 input (what a DataFrame
 holds). Usage: bench_ols.py n p [n p ...]   e.g. bench_ols.py 1_000_000 10 10_000_000 10 10_000_000 50"""
 import sys, time, gc, warnings, numpy as np, mlx.core as mx
-sys.path.insert(0, __file__.rsplit("/bench/", 1)[0])
 import mlx_stats as ms
 import statsmodels.api as sm
 from sklearn.linear_model import LinearRegression as SkLR
