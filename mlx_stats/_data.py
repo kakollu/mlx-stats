@@ -162,6 +162,9 @@ class DeviceData:
     a column's spread is far from 1, scaled by a power of two (undone exactly in float64 by the caller)."""
 
     def __init__(self, X, y, weights=None, resident=None, ones_if_empty=False):
+        if not mx.metal.is_available():
+            raise RuntimeError("mlx-stats runs its kernels on the GPU of an Apple Silicon Mac (Metal), "
+                               "and no Metal device is available here")
         self.X, self.xnames, xindex = _as_2d(X, "exog")
         if self.X.shape[1] == 0:
             if not ones_if_empty:

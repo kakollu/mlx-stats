@@ -9,8 +9,9 @@ __version__ = "0.1.0"
 import numpy as np
 from .regression import OLS, WLS, RegressionResults, SingularDesignWarning
 from .linear_model import LinearRegression
+from .formula import ols, wls
 
-__all__ = ["OLS", "WLS", "LinearRegression", "RegressionResults", "SingularDesignWarning", "add_constant"]
+__all__ = ["OLS", "WLS", "ols", "wls", "LinearRegression", "RegressionResults", "SingularDesignWarning", "add_constant"]
 
 
 def add_constant(X, prepend=True, has_constant="skip"):

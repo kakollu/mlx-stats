@@ -1,18 +1,58 @@
 # mlx-stats
 
-Linear regression on the Apple GPU through MLX, with statsmodels' results: parameters, standard errors, t and p values,
-confidence intervals, R², F, log-likelihood, AIC/BIC, omnibus, Jarque-Bera, skew, kurtosis, Durbin-Watson, condition
-number, and HC0/HC1 robust covariance. Plus a scikit-learn style `LinearRegression`.
+Linear regression on the GPU of an Apple Silicon Mac, with statsmodels' results: parameters, standard errors, t and p
+values, confidence intervals, R², F, log-likelihood, AIC/BIC, omnibus, Jarque-Bera, skew, kurtosis, Durbin-Watson,
+condition number, and HC0/HC1 robust covariance. Plus a scikit-learn style `LinearRegression`.
+
+**Requires an Apple Silicon Mac (M1 or later).** The fit runs on the Mac's GPU through Apple's MLX and Metal; it does not
+run on Windows, Linux or Intel Macs.
+
+## Quick start
+
+```bash
+pip install mlx-stats
+```
+
+(Until the first PyPI release: `pip install git+https://github.com/kakollu/mlx-stats`.)
 
 ```python
+import pandas as pd
 import mlx_stats as ms
 
-res = ms.OLS(y, X, add_constant=True).fit()      # or ms.OLS(y, ms.add_constant(X)), statsmodels style
-print(res.summary())                             # the same text statsmodels prints
-res.params, res.bse, res.pvalues, res.conf_int(), res.rsquared, res.fvalue
+df = pd.read_csv("houses.csv")
+res = ms.ols("price ~ size + age + C(region)", data=df).fit()
+print(res.summary())                 # the same table statsmodels prints
+res.params, res.pvalues, res.conf_int()
+```
 
+Formulas work as in `statsmodels.formula.api`: categorical terms `C(x)`, interactions `a * b` and `a:b`, transforms
+`np.log(x)` and `I(x ** 2)`, no intercept with `- 1`, and rows with missing values dropped. Parameter names and order
+match statsmodels. Weighted least squares and robust standard errors:
+
+```python
+ms.wls("price ~ size + age", data=df, weights="w").fit(cov_type="HC1")
+```
+
+From the command line, without writing Python:
+
+```bash
+mlx-stats fit houses.csv "price ~ size + age + C(region)"
+```
+
+To see it run on synthetic data (5 million rows, timed, and compared with statsmodels if it is installed):
+
+```bash
+mlx-stats demo
+```
+
+With [uv](https://docs.astral.sh/uv/), `uvx mlx-stats demo` runs the demo without installing anything permanently.
+
+### Without formulas
+
+```python
+res = ms.OLS(y, X, add_constant=True).fit()      # arrays or DataFrames, statsmodels argument order
 ms.WLS(y, X, weights=w).fit(cov_type="HC1")
-ms.LinearRegression().fit(X, y).coef_
+ms.LinearRegression().fit(X, y).coef_            # scikit-learn style
 ```
 
 X and y can be NumPy arrays (float64 or float32), pandas objects or MLX arrays.
@@ -68,10 +108,11 @@ weights); fitted values, residuals and every fit statistic still agree.
 ## Limits
 
 - Up to 255 columns (the residual pass); X^T X slows past ~100 columns, where the multiply rather than the read is the limit.
-- No formula interface, missing-data handling (`missing='drop'`), HC2/HC3, cluster or HAC covariance yet.
+- Missing values are dropped through the formula interface only (`OLS`/`WLS` on arrays reject NaN); no HC2/HC3,
+  cluster or HAC covariance yet.
 - Apple silicon with MLX only.
 
-## Install
+## Install from source (for development)
 
 Apple Silicon Mac, Python 3.11 or later:
 
@@ -80,8 +121,8 @@ git clone https://github.com/kakollu/mlx-stats && cd mlx-stats
 python3 -m venv .venv && .venv/bin/pip install -e ".[test]"
 ```
 
-Runtime dependencies are `mlx`, `numpy` and `scipy`; `pandas` is optional (DataFrame input and pandas-typed results).
-The `test` extra adds statsmodels, scikit-learn and pandas for the comparison suite. Tested on an M5 Max with
+Runtime dependencies are `mlx`, `numpy`, `scipy`, `pandas` and `formulaic`. The `files` extra adds Parquet and Excel
+reading for the command line; the `test` extra adds statsmodels and scikit-learn for the comparison suite. Tested on an M5 Max with
 Python 3.11 and 3.14 and MLX 0.32.2-0.32.3; other Apple Silicon chips have not been tested yet.
 
 ## Reproduce

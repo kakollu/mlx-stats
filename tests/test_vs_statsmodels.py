@@ -285,6 +285,33 @@ with warnings.catch_warnings():
     dfn = pd.DataFrame(Xt, columns=["a", "b"]); lr = ms.LinearRegression().fit(dfn, yt)
     check("LinearRegression feature-name mismatch raises", raises(lambda: lr.predict(dfn[["b", "a"]]), text="feature names"))
 
+# ---- the formula interface and the command line ---------------------------------------------------------------------
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import statsmodels.formula.api as smf
+    g = np.random.default_rng(7); n_ = 5000
+    dff = pd.DataFrame({"price": f32(g.standard_normal(n_)), "size": f32(g.uniform(1, 5, n_)), "age": g.integers(0, 50, n_).astype(float),
+                        "region": g.choice(["n", "s", "w"], n_), "kind": g.choice(["a", "b"], n_)})
+    dff.loc[[3, 17], "size"] = np.nan; dff.loc[40, "region"] = None
+    for fml in ["price ~ size + age + C(region)", "price ~ C(region) * C(kind) + size", "price ~ size + age - 1",
+                "price ~ 0 + C(region) + size", "price ~ size:C(region) + age"]:
+        r0 = smf.ols(fml, dff).fit(); r1 = ms.ols(fml, dff).fit()
+        ok = list(r0.params.index) == list(r1.params.index) and r1.nobs == r0.nobs
+        d_ = float(np.max(np.abs(r1.params.to_numpy() - r0.params.to_numpy()) / np.maximum(np.abs(r0.params.to_numpy()), 1e-12)))
+        check(f"formula {fml}", ok and d_ < 1e-7, f"names/order/nobs equal {ok}, params rel {d_:.0e}")
+    wf = g.uniform(0.5, 2, n_)
+    r0 = smf.wls("price ~ size + C(region)", dff, weights=wf).fit(); r1 = ms.wls("price ~ size + C(region)", dff, weights=wf).fit()
+    d_ = float(np.max(np.abs(r1.params.to_numpy() - r0.params.to_numpy()) / np.abs(r0.params.to_numpy())))
+    check("formula WLS with missing rows dropped", r1.nobs == r0.nobs and d_ < 1e-7, f"params rel {d_:.0e}")
+    import subprocess, tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "d.csv"); dff.to_csv(path, index=False)
+        out = subprocess.run([sys.executable, "-m", "mlx_stats.cli", "fit", path, "price ~ size + C(region)"], capture_output=True, text=True)
+        check("command line: mlx-stats fit file.csv formula", out.returncode == 0 and "C(region)[T.s]" in out.stdout and "rows used" in out.stdout,
+              out.stderr.strip().splitlines()[-1] if out.returncode else "")
+        out = subprocess.run([sys.executable, "-m", "mlx_stats.cli", "demo", "--rows", "20000"], capture_output=True, text=True)
+        check("command line: mlx-stats demo", out.returncode == 0 and "OLS Regression Results" in out.stdout)
+
 # bad input
 Xbad = X.copy(); Xbad[5, 2] = np.nan
 try:
