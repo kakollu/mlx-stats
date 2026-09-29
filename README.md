@@ -49,14 +49,21 @@ On an M5 Max, from NumPy float64 input, against `statsmodels.OLS(...).fit()` (fu
 
 With the data already in MLX memory the full fit of 100M x 10 takes 31 ms. On the same float32-valued data the
 parameters match statsmodels to 1e-9 to 1e-14 relative and the summary text is identical (`tests/test_vs_statsmodels.py`,
-31 cases).
+56 cases, including 25 regression tests from an independent review).
 
 ## Precision
 
-The GPU works in float32, so float64 inputs are rounded to float32 first; everything after that is exact or float64
-(two-float accumulation, float64 statistics). Designs whose scaled columns are nearly collinear switch to the exact Gram
-automatically. A warning is raised when the design is too collinear for float32 data to resolve (smallest scaled
-eigenvalue below 1e-10), and rank-deficient designs get statsmodels' minimum-norm solution.
+The GPU works in float32, so float64 inputs are rounded to float32 first (values beyond ~3e38 cannot be represented);
+everything after that is exact or float64 (two-float accumulation, float64 statistics). Columns whose spread is far
+from 1 are scaled by powers of two, exactly, so units from 1e-20 to 1e17 fit the same way. Designs whose scaled columns
+are nearly collinear switch to the exact Gram automatically, which keeps standard errors within ~1e-9 of a float64 fit.
+A warning is raised when the design is too collinear for float32 data to resolve (squared singular-value ratio of the
+scaled design below 1e-10). Weights are used as given (statsmodels' convention); constants are detected on the
+unweighted data, as statsmodels does.
+
+Rank-deficient designs get statsmodels' minimum-norm parameters. When such a design also has column means around
+1e5-1e6, the non-identified parameter components can differ from statsmodels' by ~1e-4 relative (more with extreme
+weights); fitted values, residuals and every fit statistic still agree.
 
 ## Limits
 

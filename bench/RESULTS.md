@@ -86,9 +86,42 @@ float64 input is copied as raw bits through a ring of three staging buffers and 
 fits went from 0.913 s to 0.149 s at 100M x 10 with that change (a single-threaded transposing copy per block had been
 most of the time).
 
+## Independent review (2026-09-28)
+
+Four review agents, each confined to this repository and small inputs, looked for defects in the kernels, statsmodels
+parity, numerical robustness, and input handling / API, and had to reproduce each finding with a script. They reported
+~45 findings (overlapping); every one was re-run before fixing. Fixed, each now a test in the suite:
+
+- tiny inputs (< 8 values, including a one-row last block) failed to compile: MLX binds them in constant memory
+- 202-255 columns overflowed threadgroup memory in the residual pass and the exact Gram
+- the "exact" Gram rounded x - K (and s(x - K) for weights) to float32, which broke exact linear relations: WLS with
+  x3 = x1 + x2 came back rank 3 with parameters of 1e5-1e6. Now the shifted values are exact two-floats and weights
+  multiply the exact products; the kernel is exact to ~1e-13 against a float64 sum
+- the pseudo-inverse depended on column units: columns in units of 1e-8 and 1e8 gave standard errors off by 10-220%
+- float32 sums of squares overflowed around column spreads of 1e17 and underflowed around 1e-19: columns and y are now
+  scaled by powers of two when needed (exact) and the results unscaled
+- residual fourth powers overflowed float32 for residual sd ~1e9 (kurtosis, omnibus, JB came back NaN)
+- WLS decided constants on the weighted data; zero-weight rows could fake a constant or an intercept
+- standard errors off by up to 8e-5 just above the exact-Gram threshold (now 1e-2: within ~3e-6 before, 1e-9 after)
+- `refine=False` could report a negative SSR on a tight fit; df_resid = 0 raised ZeroDivisionError
+- negative weights were silently zeroed; integer DataFrame labels were turned into strings; misaligned pandas indices,
+  bool/nullable columns, `add_constant` on data that already has a constant; `LinearRegression` on rank-deficient
+  designs (scikit-learn's convention differs from statsmodels'), feature-name checks, constant-y `score`
+
+Documented rather than fixed:
+- rank-deficient designs with column means around 1e5-1e6: the non-identified components of the minimum-norm
+  parameters differ from the exact minimum-norm solution by ~1e-4 (OLS) and up to ~3e-2 with weights spanning 1e6
+  (statsmodels: 3e-5 and 6e-4). Fitted values, residuals, SSR, R^2, F and every estimable combination agree to ~1e-9.
+- `precise=False` on a design the float32 Gram cannot resolve drops rank (it warns first).
+- in one dummy-trap case (a category with 3 rows among 100) statsmodels' own SVD cutoff drops a real direction; there
+  mlx-stats reaches the lower, correct SSR and the two disagree by design.
+
+Speed after the fixes (same shapes as above): full fit 19 / 68 / 149 ms, resident 4.9 / 15 / 30 ms - unchanged within
+noise; WLS costs ~1.4x OLS (the weights are copied too, and constants need one unweighted check).
+
 ## Correctness (`tests/test_vs_statsmodels.py`)
 
-31/31 cases match statsmodels (and scikit-learn for `LinearRegression`) on float32-valued data: constant first/last/none,
+56/56 cases (31 comparisons plus 25 regression tests from the review) match statsmodels (and scikit-learn for `LinearRegression`) on float32-valued data: constant first/last/none,
 `hasconst=False`, implicit constant (full dummies), dummy trap, duplicate column, zero column, two constant columns, large
 column means, a collinear pair (corr 0.99995), a near-exact fit (R^2 = 1 - 1e-11), WLS, HC0/HC1 (OLS and WLS), n = 12,
 n = 6, float32 / MLX / integer / DataFrame input, 3M rows in several blocks, streaming == resident, NaN input, the virtual
