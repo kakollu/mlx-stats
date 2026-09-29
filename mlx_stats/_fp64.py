@@ -1,4 +1,6 @@
-"""float64 -> float32 on the GPU, bit-exact with NumPy's astype (round to nearest even, subnormals, overflow to inf).
+"""float64 -> float32 on the GPU, bit-exact with NumPy's astype for every non-NaN value (round to nearest even,
+subnormals, overflow to inf); NaN becomes the canonical quiet NaN (NumPy keeps sign and payload bits - the fit rejects
+NaN either way).
 
 NumPy's cast runs at ~21 GB/s on one core; copying the raw 8-byte patterns into MLX memory runs at ~69 GB/s, and the
 GPU then rounds them at memory speed. Metal has no double type, so the rounding is done on the bit pattern with

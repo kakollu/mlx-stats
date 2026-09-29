@@ -47,13 +47,13 @@ _SRC = """
     float2 hi[4 * {TPS}], lo[4 * {TPS}];
     #pragma unroll
     for (uint t = 0; t < 4 * {TPS}; t++) {{ acc[t] = simdgroup_float8x8(0.0f); hi[t] = float2(0.0f); lo[t] = float2(0.0f); }}
-    const device float4 *X4 = (const device float4 *)X;
+    const device packed_float4 *X4 = (const device packed_float4 *)X;     // 4-byte alignment is enough
     for (uint e = tid; e < {R} * {LD}; e += {NT}) Z[e] = (e % {LD}) == {ONE} ? 1.0f : 0.0f;
     float4 pf[{NPF}]; float yv = 0.0f, sv = 1.0f;
     ulong rb = r0;
     if (rb + {R} <= r1) {{
         #pragma unroll
-        for (uint k = 0; k < {NPF}; k++) {{ uint f = tid + k * {NT}; if (f < {F4}) pf[k] = X4[(rb >> 2) * {P} + f]; }}
+        for (uint k = 0; k < {NPF}; k++) {{ uint f = tid + k * {NT}; if (f < {F4}) pf[k] = float4(X4[(rb >> 2) * {P} + f]); }}
     }}
     if (tid < {R} && rb + tid < r1) {{ {YPRE} {SPRE} }}
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -84,7 +84,7 @@ _SRC = """
         ulong rn = rb + {R};
         if (rn + {R} <= r1) {{
             #pragma unroll
-            for (uint k = 0; k < {NPF}; k++) {{ uint f = tid + k * {NT}; if (f < {F4}) pf[k] = X4[(rn >> 2) * {P} + f]; }}
+            for (uint k = 0; k < {NPF}; k++) {{ uint f = tid + k * {NT}; if (f < {F4}) pf[k] = float4(X4[(rn >> 2) * {P} + f]); }}
         }}
         if (tid < {R} && rn + tid < r1) {{ {YNEXT} {SNEXT} }}
         // 2 x 2 blocks of 8 x 8 tiles: four loads feed four multiplies
@@ -154,6 +154,18 @@ _REDUCE = """
 _kernels = {}
 
 
+def pad_min(a, k=8):
+    """MLX binds an input with fewer than 8 elements in the `constant` address space, which the kernels' vector loads
+    cannot read; pad such inputs with zero rows (the kernels never read past n, which is passed separately)."""
+    if a is None or a.size >= k:
+        return a
+    if a.ndim == 1:
+        return mx.concatenate([a, mx.zeros((k - a.size,), a.dtype)])
+    cols = max(1, a.shape[1])
+    extra = -(-(k - a.size) // cols)
+    return mx.concatenate([a, mx.zeros((extra, a.shape[1]), a.dtype)], axis=0)
+
+
 # Launch shape by padded width q16: (rows per stage, simdgroups per threadgroup, 16x16 blocks per simdgroup).
 # From bench/tune_gram.py on an M5 Max, 2026-09-28 (3 GB inputs, best of 5):
 #   p=8 410 GB/s, p=16 386, p=32 356, p=48 268, p=64 293, p=100 192, p=128 156, p=200 85 (read floor ~500).
@@ -181,6 +193,9 @@ def _config(p, has_y, override=None):
             bi.append(i); bj.append(j)
     U = len(bi)
     r, nsg, tps = override if override is not None else _tuned(q16)
+    ld = q16 + 4 if q16 % 32 == 0 else q16
+    while r > 8 and 4 * (r * ld + q16) > 28 * 1024:    # stay inside threadgroup memory for very wide designs
+        r //= 2
     tps = min(tps, -(-U // nsg))
     gt = -(-U // (nsg * tps))                         # threadgroups that split the tile set over the same rows
     return q, q16, T2, bi, bj, U, nsg, tps, gt, r
@@ -234,7 +249,7 @@ def gram_launch(X, y=None, s=None, shift=None, override=None):
     per = -(-per // r) * r
     G = max(1, -(-n // per))
     meta = mx.array(np.array([n & 0xffffffff, n >> 32, per & 0xffffffff, per >> 32], dtype=np.uint32))
-    ins = [X] + ([y] if y is not None else []) + ([s] if s is not None else []) + [shift, meta]
+    ins = [pad_min(X)] + ([pad_min(y)] if y is not None else []) + ([pad_min(s)] if s is not None else []) + [shift, meta]
     part = k(inputs=ins, grid=(G * gt * nt, 1, 1), threadgroup=(nt, 1, 1), output_shapes=[(G * U * 4 * 128,)],
              output_dtypes=[mx.float32], init_value=0.0)[0]
     red = _reduce_kernel()(inputs=[part, mx.array(np.array([G], np.uint32)), mx.array(np.array([U * 4], np.uint32))],

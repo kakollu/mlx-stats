@@ -11,18 +11,18 @@ def _forg(x, prec=3):
     return f"{x:{w}.{prec}f}"
 
 
-def _pair(L, lv, R="", rv="", rw=38):
-    left = L + f"{lv:>{max(1, 37 - len(L))}}"
+def _pair(L, lv, R="", rv="", rw=38, lw=37):
+    left = L + f"{lv:>{max(1, lw - len(L))}}"
     right = R + f"{rv:>{max(1, rw - len(R))}}" if R else " " * rw
     return f"{left}   {right}"
 
 
 def summary(res, alpha=0.05):
     m = res.model
-    title = "WLS Regression Results" if m._weighted else "OLS Regression Results"
+    title = f"{m._kind} Regression Results"
     unc = "" if res.k_constant else " (uncentered)"
     now = time.localtime()
-    rows_l = [("Dep. Variable:", m.yname), ("Model:", "WLS" if m._weighted else "OLS"), ("Method:", "Least Squares"),
+    rows_l = [("Dep. Variable:", m.yname), ("Model:", m._kind), ("Method:", "Least Squares"),
               ("Date:", time.strftime("%a, %d %b %Y", now)), ("Time:", time.strftime("%H:%M:%S", now)),
               ("No. Observations:", f"{int(res.nobs)}"), ("Df Residuals:", f"{int(res.df_resid)}"),
               ("Df Model:", f"{int(res.df_model)}"), ("Covariance Type:", res.cov_type)]
@@ -30,12 +30,13 @@ def summary(res, alpha=0.05):
               ("F-statistic:", f"{res.fvalue:#8.4g}"), ("Prob (F-statistic):", f"{res.f_pvalue:#6.3g}"),
               ("Log-Likelihood:", f"{res.llf:#8.5g}"), ("AIC:", f"{res.aic:#8.4g}"), ("BIC:", f"{res.bic:#8.4g}")]
     rw = max(38, 19 + max(len(R) for R, _ in rows_r))       # statsmodels widens the header table for long labels
-    tw = 40 + rw
+    lw = 18 + max(19, max(len(v) for _, v in rows_l) + 1)   # ...and for long values such as a long endog name
+    tw = lw + 3 + rw
     pad = tw - len(title)
     out = [" " * (pad - pad // 2) + title + " " * (pad // 2), "=" * tw]     # statsmodels puts the odd space on the left
     for i, (L, lv) in enumerate(rows_l):
         R, rv = rows_r[i] if i < len(rows_r) else ("", "")
-        out.append(_pair(L, lv, R, rv, rw))
+        out.append(_pair(L, lv, R, rv, rw, lw))
     # parameter table
     names = res.exog_names
     params, se, t, pv = (np.asarray(v, float) for v in (res.params, res.bse, res.tvalues, res.pvalues))

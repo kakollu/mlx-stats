@@ -11,14 +11,34 @@ from .linear_model import LinearRegression
 __all__ = ["OLS", "WLS", "LinearRegression", "RegressionResults", "SingularDesignWarning", "add_constant"]
 
 
-def add_constant(X, prepend=True):
-    """A column of ones in front (or at the end), like statsmodels.add_constant. Keeps DataFrames as DataFrames."""
+def add_constant(X, prepend=True, has_constant="skip"):
+    """A column of ones in front (or at the end), like statsmodels.add_constant. With has_constant='skip' (the
+    default, as in statsmodels) nothing is added when X already has a nonzero constant column; 'add' always adds;
+    'raise' raises. DataFrames and Series come back as DataFrames with a 'const' column."""
+    if has_constant not in ("skip", "add", "raise"):
+        raise ValueError("has_constant must be 'skip', 'add' or 'raise'")
+    if hasattr(X, "to_frame") and not hasattr(X, "columns"):
+        X = X.to_frame()
+    if hasattr(X, "columns"):
+        vals = X.to_numpy(dtype=np.float64, na_value=np.nan) if len(X) else np.zeros((0, X.shape[1]))
+    else:
+        vals = np.asarray(X, dtype=np.float64)
+        if vals.ndim == 1:
+            vals = vals[:, None]
+    if vals.shape[0]:
+        const = (np.nanmax(vals, 0) == np.nanmin(vals, 0)) & (vals[0] != 0)
+        if const.any():
+            if has_constant == "raise":
+                raise ValueError("data already contains a constant column")
+            if has_constant == "skip":
+                return X if hasattr(X, "columns") else (vals if np.asarray(X).ndim == 1 else X)
     if hasattr(X, "columns"):
         X = X.copy()
+        name = "const"
         if prepend:
-            X.insert(0, "const", 1.0)
+            X.insert(0, name, 1.0, allow_duplicates=True)
         else:
-            X["const"] = 1.0
+            X[name] = 1.0
         return X
     X = np.asarray(X)
     if X.ndim == 1:
